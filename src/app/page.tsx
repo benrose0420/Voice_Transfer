@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 
+//This is front page.
 export default function Home() {
   const localRef = useRef<HTMLAudioElement>(null);
   const remoteRef = useRef<HTMLAudioElement>(null);
