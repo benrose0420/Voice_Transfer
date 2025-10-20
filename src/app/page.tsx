@@ -1,103 +1,130 @@
-import Image from "next/image";
+"use client";
+import React, { useEffect, useRef, useState } from "react";
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const localRef = useRef<HTMLAudioElement>(null);
+  const remoteRef = useRef<HTMLAudioElement>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [status, setStatus] = useState("idle");
+  const [logs, setLogs] = useState<string[]>([]);
+  const [voice, setVoice] = useState("alloy");
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const log = (msg: string) => setLogs((l) => [...l, msg]);
+
+  const start = async () => {
+    try { 
+      setStatus("starting");
+      log("Getting microphone...");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      if (localRef.current) {
+        localRef.current.srcObject = stream;
+        localRef.current.muted = true;
+      }
+
+      const pc = new RTCPeerConnection();
+      pcRef.current = pc;
+
+      // Play remote track
+      pc.ontrack = (e) => {
+        if (remoteRef.current) remoteRef.current.srcObject = e.streams[0];
+      };
+
+      // Add local audio
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+
+      log("Requesting session from backend...");
+      const r = await fetch("/api/realtime-session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ voice }),
+      });
+      const { signalUrl } = await r.json();
+
+      // Create offer and send to OpenAI Realtime endpoint
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      log("Sending SDP offer...");
+      const answerResp = await fetch(signalUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/sdp" },
+        body: offer.sdp,
+      });
+
+      const answerSdp = await answerResp.text();
+      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+
+      setStatus("running");
+      log("Realtime voice transformer active.");
+    } catch (e: any) {
+      console.error(e);
+      log("Error: " + e.message);
+      setStatus("error");
+    }
+  };
+
+  const stop = async () => {
+    if (pcRef.current) pcRef.current.close();
+    if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+    pcRef.current = null;
+    streamRef.current = null;
+    setStatus("idle");
+    log("Stopped.");
+  };
+
+  return (
+    <main className="p-6 max-w-3xl mx-auto">
+      <h1 className="text-2xl font-semibold mb-4">Realtime Voice Transformer</h1>
+
+      <div className="mb-4">
+        <label className="block text-sm mb-1">Voice preset:</label>
+        <select
+          value={voice}
+          onChange={(e) => setVoice(e.target.value)}
+          className="border p-2 rounded"
+        >
+          <option value="alloy">Alloy (male, default)</option>
+          <option value="verse">Verse (clear)</option>
+          <option value="warm">Warm</option>
+        </select>
+      </div>
+
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={start}
+          disabled={status === "running"}
+          className="bg-blue-600 text-white px-4 py-2 rounded"
+        >
+          Start
+        </button>
+        <button
+          onClick={stop}
+          disabled={status === "idle"}
+          className="bg-gray-300 px-4 py-2 rounded"
+        >
+          Stop
+        </button>
+        <span className="ml-auto text-sm">Status: {status}</span>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <div>
+          <p className="text-sm font-medium">Local (mic)</p>
+          <audio ref={localRef} autoPlay controls={false}></audio>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+        <div>
+          <p className="text-sm font-medium">Transformed voice</p>
+          <audio ref={remoteRef} autoPlay controls></audio>
+        </div>
+      </div>
+
+      <div className="mt-4 border p-3 h-40 overflow-auto text-xs bg-gray-50">
+        {logs.map((l, i) => (
+          <div key={i}>{l}</div>
+        ))}
+      </div>
+    </main>
   );
 }
