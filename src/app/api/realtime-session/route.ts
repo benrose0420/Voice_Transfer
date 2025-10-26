@@ -1,24 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// This route acts as a proxy between your browser and OpenAI's Realtime API
 export async function POST(req: NextRequest) {
-  const { voice } = await req.json();
+  const offer = await req.text(); // Browser sends SDP offer
 
-  const resp = await fetch("https://api.openai.com/v1/realtime/sessions", {
+  const response = await fetch("https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/sdp",
     },
-    body: JSON.stringify({
-      model: "gpt-4o-realtime-preview",
-      voice: voice || "alloy",
-      modalities: ["audio"],
-      input_audio_format: "wav",
-      output_audio_format: "wav",
-    }),
+    body: offer,
   });
 
-  const data = await resp.json();
-  const signalUrl = data.client_secret?.value || "";
-  return NextResponse.json({ signalUrl });
+  const answer = await response.text();
+
+  return new NextResponse(answer, {
+    headers: { "Content-Type": "application/sdp" },
+  });
 }

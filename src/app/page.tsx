@@ -1,7 +1,6 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 
-//This is front page.
 export default function Home() {
   const localRef = useRef<HTMLAudioElement>(null);
   const remoteRef = useRef<HTMLAudioElement>(null);
@@ -14,57 +13,51 @@ export default function Home() {
   const log = (msg: string) => setLogs((l) => [...l, msg]);
 
   const start = async () => {
-    try { 
-      setStatus("starting");
-      log("Getting microphone...");
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      if (localRef.current) {
-        localRef.current.srcObject = stream;
-        localRef.current.muted = true;
-      }
+  try {
+    setStatus("starting");
+    log("Getting microphone...");
 
-      const pc = new RTCPeerConnection();
-      pcRef.current = pc;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    streamRef.current = stream;
 
-      // Play remote track
-      pc.ontrack = (e) => {
-        if (remoteRef.current) remoteRef.current.srcObject = e.streams[0];
-      };
-
-      // Add local audio
-      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-
-      log("Requesting session from backend...");
-      const r = await fetch("/api/realtime-session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ voice }),
-      });
-      const { signalUrl } = await r.json();
-
-      // Create offer and send to OpenAI Realtime endpoint
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      log("Sending SDP offer...");
-      const answerResp = await fetch(signalUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/sdp" },
-        body: offer.sdp,
-      });
-
-      const answerSdp = await answerResp.text();
-      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
-
-      setStatus("running");
-      log("Realtime voice transformer active.");
-    } catch (e: any) {
-      console.error(e);
-      log("Error: " + e.message);
-      setStatus("error");
+    if (localRef.current) {
+      localRef.current.srcObject = stream;
+      localRef.current.muted = true;
     }
-  };
+
+    const pc = new RTCPeerConnection();
+    pcRef.current = pc;
+
+    pc.ontrack = (e) => {
+      if (remoteRef.current) remoteRef.current.srcObject = e.streams[0];
+    };
+
+    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+
+    log("Creating SDP offer...");
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    log("Sending SDP offer to backend...");
+    const answerResp = await fetch("/api/realtime-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/sdp" },
+      body: offer.sdp,
+    });
+
+    const answerSdp = await answerResp.text();
+
+    log("Setting remote description...");
+    await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+
+    setStatus("running");
+    log("✅ Realtime voice transformer active!");
+  } catch (e: any) {
+    console.error(e);
+    log("Error: " + e.message);
+    setStatus("error");
+  }
+};
 
   const stop = async () => {
     if (pcRef.current) pcRef.current.close();
